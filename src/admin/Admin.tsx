@@ -162,17 +162,16 @@ function Count({ v }: { v: number }) {
   return <span className={`tabular-nums transition-colors duration-700 ${flash > 0 ? 'text-emerald-500' : flash < 0 ? 'text-red-500' : ''}`}>{shown.toLocaleString()}</span>;
 }
 function LiveLedger({ a }: P) {
-  const [pa, setPa] = useState(''), [pb, setPb] = useState('');
-  const [d] = usePoll<any>(a.call, `/admin/live-ledger?a=${encodeURIComponent(pa)}&b=${encodeURIComponent(pb)}`, 1500);
-  const A = d?.a, B = d?.b;
-  const Big = ({ label, v, sub }: { label: string; v?: number; sub?: string }) => (<div className="bg-white border-2 border-slate-200 rounded-3xl p-8 text-center"><p className="text-3xl text-slate-500">{label}</p><p className="text-6xl whitespace-nowrap font-bold mt-2" data-testid={`ll-${label}`}>Rs <Count v={v ?? 0} /></p>{sub && <p className="text-2xl text-slate-400 mt-1">{sub}</p>}</div>);
+  const [d] = usePoll<any>(a.call, '/admin/live-ledger', 1500);
+  const people: any[] = d?.people ?? [];
+  const sum = (k: string) => people.reduce((t, p) => t + (p[k] ?? 0), 0);
+  const Big = ({ label, v, sub }: { label: string; v: number; sub?: string }) => (<div className="bg-white border-2 border-slate-200 rounded-3xl p-6 text-center"><p className="text-2xl text-slate-500">{label}</p><p className="text-5xl whitespace-nowrap font-bold mt-2" data-testid={`ll-${label}`}>Rs <Count v={v} /></p>{sub && <p className="text-xl text-slate-400 mt-1">{sub}</p>}</div>);
   return (
     <div className="min-h-screen bg-slate-50 p-8 space-y-6">
-      <div className="flex items-center justify-between"><h1 className="text-5xl font-bold">Live ledger</h1></div>
-      <div className="flex gap-3 items-center text-lg"><select className="border rounded p-1" value={pa} onChange={(e) => setPa(e.target.value)}><option value="">Person A: first user</option>{d?.users.map((u: any) => <option key={u.phone} value={u.phone}>{u.name}</option>)}</select>
-        <select className="border rounded p-1" value={pb} onChange={(e) => setPb(e.target.value)}><option value="">Person B: second user</option>{d?.users.map((u: any) => <option key={u.phone} value={u.phone}>{u.name}</option>)}</select>
-        <a href="#/overview" className="underline ml-auto text-sm">Back to dashboard</a></div>
-      <div className="grid grid-cols-3 gap-6"><Big label={`${A?.name ?? 'A'}: account`} v={A?.account} sub="main account at the bank" /><Big label={`${A?.name ?? 'A'}: send slot`} v={A?.send_slot} sub="offline points not yet spent" /><Big label={`${B?.name ?? 'B'}: account`} v={B?.account} sub={`+ receive slot: ${B?.receive_slot ?? 0}`} /></div>
+      <div className="flex items-center justify-between"><h1 className="text-5xl font-bold">Live ledger</h1><a href="#/overview" className="underline text-sm">Back to dashboard</a></div>
+      <div className="grid grid-cols-3 gap-6"><Big label="All bank accounts" v={sum('account')} sub={`${people.length} people`} /><Big label="Offline points held (send)" v={sum('send_slot')} sub="on phones, not yet spent" /><Big label="Received, waiting to settle" v={sum('receive_slot')} sub="in receive slots" /></div>
+      <div className="bg-white border-2 border-slate-200 rounded-3xl p-4"><table className="w-full text-2xl"><thead><tr className="text-left text-slate-500 text-xl"><th className="p-2">Person</th><th className="p-2 text-right">Bank account</th><th className="p-2 text-right">Send slot</th><th className="p-2 text-right">Receive slot</th></tr></thead>
+        <tbody>{people.map((p) => (<tr key={p.id} className="border-t" data-testid={`ll-row-${p.name}`}><td className="p-2 font-semibold">{p.name}</td><td className="p-2 text-right tabular-nums">Rs <Count v={p.account} /></td><td className="p-2 text-right tabular-nums"><Count v={p.send_slot} /></td><td className="p-2 text-right tabular-nums"><Count v={p.receive_slot} /></td></tr>))}</tbody></table></div>
       <p className="text-2xl text-slate-500">These numbers change only when a phone syncs with the bank. While phones are offline and paying each other, they stay exactly as they are. Updated {d ? new Date(d.server_time).toLocaleTimeString() : '...'}</p>
       <div className="space-y-2">{d?.entries.map((e: any) => (<div key={e.id} className="bg-white border rounded-xl px-5 py-3 text-2xl flex justify-between animate-[fadein_.8s]"><span>{new Date(e.at).toLocaleTimeString()} · <b>{e.kind.replace(/_/g, ' ')}</b> · {e.who}{e.other ? ` → ${e.other}` : ''}</span><span className="text-slate-600">{[e.d_main && `account ${e.d_main > 0 ? '+' : ''}${e.d_main}`, e.d_send && `send ${e.d_send > 0 ? '+' : ''}${e.d_send}`, e.d_recv && `receive ${e.d_recv > 0 ? '+' : ''}${e.d_recv}`].filter(Boolean).join(', ')}</span></div>))}</div>
     </div>

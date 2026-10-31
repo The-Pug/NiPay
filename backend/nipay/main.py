@@ -784,9 +784,12 @@ def create_app(settings: Settings | None = None, portal: str = "all") -> FastAPI
             ub = next((u for u in users if u.id != ua.id), None)
         view = lambda u: None if u is None else {"id": u.id, "name": u.name, "phone": u.phone, "account": u.main_balance, "send_slot": u.send_bucket, "receive_slot": u.receive_bucket}
         ids = [u.id for u in (ua, ub) if u]
-        rows = db.scalars(select(LedgerEntry).where((LedgerEntry.user_id.in_(ids)) | (LedgerEntry.other_user_id.in_(ids))).order_by(LedgerEntry.id.desc()).limit(12)).all() if ids else []
+        if a or b:
+            rows = db.scalars(select(LedgerEntry).where((LedgerEntry.user_id.in_(ids)) | (LedgerEntry.other_user_id.in_(ids))).order_by(LedgerEntry.id.desc()).limit(12)).all() if ids else []
+        else:  # projector default: everyone, newest first
+            rows = db.scalars(select(LedgerEntry).order_by(LedgerEntry.id.desc()).limit(30)).all()
         names = {u.id: u.name for u in users}
-        return {"label": "TEST MONEY - fake rupees, no real payment gateway", "a": view(ua), "b": view(ub), "users": [{"phone": u.phone, "name": u.name} for u in users],
+        return {"label": "TEST MONEY - fake rupees, no real payment gateway", "a": view(ua), "b": view(ub), "people": [view(u) for u in users], "users": [{"phone": u.phone, "name": u.name} for u in users],
                 "server_time": now().isoformat(), "last_entry_id": rows[0].id if rows else 0,
                 "entries": [{"id": r.id, "at": r.ts.isoformat(), "kind": r.kind, "who": names.get(r.user_id), "other": names.get(r.other_user_id),
                              "d_main": r.d_main, "d_send": r.d_send, "d_recv": r.d_recv} for r in rows]}
