@@ -168,7 +168,7 @@ function LiveLedger({ a }: P) {
   const Big = ({ label, v, sub }: { label: string; v?: number; sub?: string }) => (<div className="bg-white border-2 border-slate-200 rounded-3xl p-8 text-center"><p className="text-3xl text-slate-500">{label}</p><p className="text-6xl whitespace-nowrap font-bold mt-2" data-testid={`ll-${label}`}>Rs <Count v={v ?? 0} /></p>{sub && <p className="text-2xl text-slate-400 mt-1">{sub}</p>}</div>);
   return (
     <div className="min-h-screen bg-slate-50 p-8 space-y-6">
-      <div className="flex items-center justify-between"><h1 className="text-5xl font-bold">Live ledger</h1><span className="text-3xl font-bold bg-amber-100 text-amber-800 rounded-xl px-5 py-2">TEST MONEY - fake rupees</span></div>
+      <div className="flex items-center justify-between"><h1 className="text-5xl font-bold">Live ledger</h1></div>
       <div className="flex gap-3 items-center text-lg"><select className="border rounded p-1" value={pa} onChange={(e) => setPa(e.target.value)}><option value="">Person A: first user</option>{d?.users.map((u: any) => <option key={u.phone} value={u.phone}>{u.name}</option>)}</select>
         <select className="border rounded p-1" value={pb} onChange={(e) => setPb(e.target.value)}><option value="">Person B: second user</option>{d?.users.map((u: any) => <option key={u.phone} value={u.phone}>{u.name}</option>)}</select>
         <a href="#/overview" className="underline ml-auto text-sm">Back to dashboard</a></div>
