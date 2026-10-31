@@ -720,3 +720,22 @@ def test_super_admin_registers_official_builds_and_checks_use_them(env):
     assert env.c.post("/admin/builds", json={"digest": "zzzzzzzzzz"}, headers=ro).status_code == 403          # read-only role cannot register
     assert env.c.get("/admin/builds", headers=ro).status_code == 200
     assert env.c.post("/admin/builds/remove", json={"digest": "abcdef012345"}, headers=h).json()["digests"] == []
+
+
+def test_admin_dashboard_figures_come_from_records_and_reconcile(env):
+    a, b = pair(env)
+    b.claim(a.pay_to(b, a.value_points()[0]))
+    h = admin(env)
+    users = env.c.get("/admin/users", headers=h).json()["users"]
+    d = env.c.get("/admin/dashboard", headers=h).json()
+    assert d["users"]["total"] == len(users)
+    assert d["wallets"]["total"] == sum(u["main_balance"] for u in users)   # wallet total = sum of per-user records only
+    assert d["transactions"]["payments_total"] >= 1 and d["transactions"]["successful"] >= 1
+    assert len(d["series"]) == 14
+    r = env.c.get("/admin/reconciliation", headers=h).json()
+    assert r["balanced"] and all(c["matches"] for c in r["categories"])
+    assert r["categories"][0]["records"] == d["wallets"]["total"]
+    tx = env.c.get("/admin/transactions", headers=h).json()["transactions"]
+    pay = [t for t in tx if t["type"] == "Offline payment"]
+    assert pay and pay[0]["sender"] and pay[0]["receiver"] and pay[0]["amount"] >= 1
+    assert all(u["created_at"] for u in users)

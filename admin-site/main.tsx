@@ -4,10 +4,10 @@ import { createRoot } from 'react-dom/client';
 import { Admin } from '../src/admin/Admin';
 import './admin.css';
 
-const route = () => location.hash.slice(2).split('/')[0] || 'overview';
+const route = () => location.hash.slice(2).split(/[/?]/)[0] || 'overview';
 function Site() {
-  const [page, setPage] = useState(route());
-  useEffect(() => { const f = () => setPage(route()); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
-  return <Admin page={page} />;
+  const [, setHash] = useState(location.hash); // re-render on any hash change, including ?q= search parameters
+  useEffect(() => { const f = () => setHash(location.hash); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
+  return <Admin page={route()} />;
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><Site /></StrictMode>);

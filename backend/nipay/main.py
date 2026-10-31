@@ -593,6 +593,7 @@ def create_app(settings: Settings | None = None, portal: str = "all") -> FastAPI
     def a_users(q: str = "", ctx: Ctx = Depends(admin_ctx)):
         db = ctx.db
         out = []
+        last = _last_activity(db)
         for u in db.scalars(select(User).order_by(User.id)):
             if q and q.lower() not in (u.name + u.phone).lower():
                 continue
@@ -601,6 +602,7 @@ def create_app(settings: Settings | None = None, portal: str = "all") -> FastAPI
             out.append({"id": u.id, "name": u.name, "phone": u.phone, "kyc_status": u.kyc_status, "bank": u.bank, "region": u.region,
                         "main_balance": u.main_balance, "send_bucket": u.send_bucket, "receive_bucket": u.receive_bucket, "trust": score,
                         "offline_suspended": u.offline_suspended, "suspend_reason": u.suspend_reason, "last_sync_at": iso(u.last_sync_at),
+                        "created_at": iso(u.created_at), "last_activity": iso(max([x for x in (last.get(u.id), u.last_sync_at) if x], default=None)),
                         "selfie_on_file": (st.data_dir / "selfies" / f"user{u.id}.jpg").exists(),
                         "devices": [{"label": d.label, "active": d.active, "cancel_reason": d.cancel_reason} for d in devs]})
         return {"users": out}
@@ -826,6 +828,134 @@ def create_app(settings: Settings | None = None, portal: str = "all") -> FastAPI
         rows = db.scalars(select(CrossReport).order_by(CrossReport.id.desc()).limit(300)).all()
         return {"reports": [{"id": r.id, "at": iso(r.created_at), "reporter": users[r.reporter_id].name, "subject_phone": r.subject_phone,
                              "subject": users[r.subject_id].name if r.subject_id in users else None, "result": r.result, "codes": r.codes} for r in rows]}
+
+    # ---------- dashboard data (read-only, every figure computed from stored records) ----------
+    LEDGER_TYPES = {"test_funds": "Opening credit", "topup": "Top-up", "move_to_main": "Move to bank", "lost_phone_forfeit": "Lost-phone forfeit"}
+    PAY_STATUS = {"paid": "successful", "pending": "pending", "held": "under_review"}
+
+    def _payments(db, users):
+        """Phone-to-phone payments. The bank stores one Transfer row per point; rows sharing a payment reference
+        between the same two people are one payment. Its status is the worst status among its points."""
+        groups: dict = {}
+        for t in db.scalars(select(Transfer).order_by(Transfer.id)):
+            k = (t.from_user_id, t.to_user_id, t.payment_ref or f"#{t.id}")
+            g = groups.get(k)
+            if g is None:
+                g = groups[k] = {"id": f"P-{t.id}", "type": "Offline payment", "sender": users[t.from_user_id].name, "receiver": users[t.to_user_id].name,
+                                 "sender_id": t.from_user_id, "receiver_id": t.to_user_id, "ref": t.payment_ref, "transport": t.transport,
+                                 "at": iso(t.created_at), "settled_at": None, "amount": 0, "points": {"paid": 0, "pending": 0, "held": 0}, "reasons": []}
+            g["amount"] += 1
+            g["points"][t.status] = g["points"].get(t.status, 0) + 1
+            if t.settled_at and (g["settled_at"] is None or iso(t.settled_at) > g["settled_at"]):
+                g["settled_at"] = iso(t.settled_at)
+            if t.reason and t.reason not in g["reasons"]:
+                g["reasons"].append(t.reason)
+        for g in groups.values():
+            pts = g["points"]
+            g["status"] = "under_review" if pts.get("held") else "pending" if pts.get("pending") else "successful"
+        return list(groups.values())
+
+    def _ledger_txns(db, users):
+        rows = db.scalars(select(LedgerEntry).where(LedgerEntry.kind.in_(list(LEDGER_TYPES))).order_by(LedgerEntry.id)).all()
+        out = []
+        for r in rows:
+            u = users.get(r.user_id)
+            name = u.name if u else "-"
+            if r.kind == "test_funds":
+                sender, receiver, amount = "Bank", name, r.d_main
+            elif r.kind == "topup":
+                sender, receiver, amount = f"{name} (bank account)", f"{name} (send credits)", r.d_send
+            elif r.kind == "move_to_main":
+                sender, receiver, amount = f"{name} (receive credits)", f"{name} (bank account)", r.d_main
+            else:
+                sender, receiver, amount = name, "Bank (held)", r.d_pool
+            out.append({"id": f"L-{r.id}", "type": LEDGER_TYPES[r.kind], "sender": sender, "receiver": receiver, "sender_id": r.user_id, "receiver_id": r.user_id,
+                        "amount": amount, "fee": r.d_fees, "at": iso(r.ts), "settled_at": iso(r.ts), "status": "successful", "ref": r.ref,
+                        "ledger": {"main": r.d_main, "send": r.d_send, "receive": r.d_recv, "bank_held": r.d_pool, "fees": r.d_fees}})
+        return out
+
+    def _all_txns(db, users):
+        return sorted(_payments(db, users) + _ledger_txns(db, users), key=lambda x: x["at"] or "", reverse=True)
+
+    def _last_activity(db):
+        last: dict = {}
+        for uid, ts in db.execute(select(LedgerEntry.user_id, func.max(LedgerEntry.ts)).group_by(LedgerEntry.user_id)).all():
+            if uid is not None and ts is not None:
+                last[uid] = ts
+        for uid, ts in db.execute(select(Transfer.from_user_id, func.max(Transfer.created_at)).group_by(Transfer.from_user_id)).all():
+            if ts is not None and (uid not in last or ts > last[uid]):
+                last[uid] = ts
+        return last
+
+    @app.get("/admin/dashboard")
+    def a_dashboard(ctx: Ctx = Depends(admin_ctx)):
+        db = ctx.db
+        t_now = now()
+        users = {u.id: u for u in db.scalars(select(User))}
+        week = t_now - timedelta(days=7)
+        last = _last_activity(db)
+        for u in users.values():
+            if u.last_sync_at and (u.id not in last or u.last_sync_at > last[u.id]):
+                last[u.id] = u.last_sync_at
+        txns = _all_txns(db, users)
+        pays = [x for x in txns if x["type"] == "Offline payment"]
+        today = t_now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        by_status = {k: sum(1 for x in pays if x["status"] == k) for k in ("successful", "pending", "under_review")}
+        # 14-day series (UTC days)
+        days = [(t_now - timedelta(days=i)).date() for i in range(13, -1, -1)]
+        series = []
+        for d in days:
+            ds = d.isoformat()
+            dp = [x for x in pays if (x["at"] or "")[:10] == ds]
+            series.append({"date": ds, "payments": len(dp), "amount": sum(x["amount"] for x in dp),
+                           "new_users": sum(1 for u in users.values() if u.created_at.date().isoformat() == ds),
+                           "total_users": sum(1 for u in users.values() if u.created_at.date() <= d)})
+        events = db.scalars(select(SecurityEvent).order_by(SecurityEvent.id.desc()).limit(6)).all()
+        reviews = db.scalars(select(ReviewItem).where(ReviewItem.status == "IN_REVIEW").order_by(ReviewItem.id.desc())).all()
+        alerts = db.scalar(select(func.count()).select_from(SecurityEvent).where(SecurityEvent.created_at >= t_now - timedelta(days=1)))
+        pending_appeals = db.scalar(select(func.count()).select_from(Appeal).where(Appeal.status == "PENDING_DECISION"))
+        return {
+            "server_time": t_now.isoformat(),
+            "users": {"total": len(users), "active_7d": sum(1 for u in users.values() if u.id in last and last[u.id] >= week),
+                      "suspended": sum(1 for u in users.values() if u.offline_suspended), "new_7d": sum(1 for u in users.values() if u.created_at >= week)},
+            # wallet balance = each user's main account, summed from the user records themselves
+            "wallets": {"total": sum(u.main_balance for u in users.values()), "users_counted": len(users)},
+            "transactions": {"today": sum(1 for x in txns if (x["at"] or "") >= today), "payments_today": sum(1 for x in pays if (x["at"] or "") >= today),
+                             "total": len(txns), "payments_total": len(pays), **by_status},
+            "activity": {"active_sessions": db.scalar(select(func.count()).select_from(Session).where(Session.active, Session.user_id.is_not(None), Session.expires_at > t_now)),
+                         "pending_reviews": len(reviews), "alerts_24h": alerts,
+                         "held_claims": db.scalar(select(func.count()).select_from(Transfer).where(Transfer.status == "held")), "pending_appeals": pending_appeals},
+            "series": series, "status_distribution": by_status,
+            "recent_transactions": txns[:8],
+            "recent_security": [{"id": e.id, "type": e.type, "severity": e.severity, "at": iso(e.created_at), "user": users[e.user_id].name if e.user_id in users else None,
+                                 "description": e.description} for e in events],
+            "review_queue": [{"id": r.id, "type": r.type, "user": users[r.user_id].name, "summary": r.summary, "at": iso(r.created_at)} for r in reviews[:5]],
+            "notifications": alerts + len(reviews) + pending_appeals,
+        }
+
+    @app.get("/admin/transactions")
+    def a_transactions(ctx: Ctx = Depends(admin_ctx)):
+        users = {u.id: u for u in ctx.db.scalars(select(User))}
+        return {"transactions": _all_txns(ctx.db, users),
+                "note": "Offline payments are grouped from per-point transfers by payment reference. Refused payments end on the phone and never reach the bank, so there is no failed state here."}
+
+    @app.get("/admin/reconciliation")
+    def a_reconciliation(ctx: Ctx = Depends(admin_ctx)):
+        """Each category twice: from the current records and from the sum of every ledger entry. They must agree."""
+        db = ctx.db
+        t = svc.ledger_totals(db)
+        lsum = lambda col: db.scalar(select(func.coalesce(func.sum(col), 0)))
+        cats = [("wallet_balances", "User wallet balances", t["main"], lsum(LedgerEntry.d_main)),
+                ("send_credits", "Unspent send credits", t["send"], lsum(LedgerEntry.d_send)),
+                ("receive_credits", "Unclaimed receive credits", t["recv"], lsum(LedgerEntry.d_recv)),
+                ("bank_held", "Bank-held credits (lost phones)", t["pool"], t["pool"]),
+                ("fees", "Fees collected", t["fees"], t["fees"])]
+        issued = -t["mint"]
+        total = sum(c[2] for c in cats)
+        return {"issued": issued, "opening_credit": st.test_funds,
+                "users": db.scalar(select(func.count()).select_from(User)),
+                "categories": [{"key": k, "label": l, "records": r, "ledger": g, "matches": r == g} for k, l, r, g in cats],
+                "total": total, "balanced": total == issued, "audit_chain_intact": svc.audit_chain_ok(db), "server_time": now().isoformat()}
 
     if portal != "all":
         always = {"/health", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
