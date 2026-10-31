@@ -15,6 +15,7 @@ export const NAV: { label: string; route: string; icon: React.ElementType; badge
   { label: 'Move money to bank', route: '/move', icon: ArrowRightLeft },
   { label: 'History', route: '/history', icon: History },
   { label: 'Report or appeal', route: '/report', icon: LifeBuoy },
+  { label: 'Profile and KYC', route: '/profile', icon: ShieldCheck },
   { label: 'Settings', route: '/more', icon: Settings, routes: ['/settings', '/selfie'] },
 ];
 const active = (route: string, item: (typeof NAV)[number]) => route === item.route || !!item.routes?.includes(route);
