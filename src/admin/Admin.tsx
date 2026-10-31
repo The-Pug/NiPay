@@ -53,9 +53,24 @@ function Overview({ a }: P) {
   const [d, e] = usePoll<any>(a.call, '/admin/overview', 3000);
   if (!d) return <Err msg={e} />;
   const m = d.money_in_slots;
-  return (<><h1 className="text-xl font-bold">Overview <Badge tone="blue">test money</Badge></h1>
-    <div className="grid grid-cols-4 gap-3">{([['Main accounts', m.main], ['In send slots', m.send_bucket], ['In receive slots', m.receive_bucket], ['Kept by bank (lost phones)', m.bank_kept], ['Payments today', d.payments_today], ['Pending sync', d.pending_sync], ['Held claims', d.held_claims], ['Alerts (24h)', d.active_alerts]] as [string, number][]).map(([l, v]) => <Card key={l}><p className="text-xs text-slate-500">{l}</p><p className="text-2xl font-bold">{v}</p></Card>)}</div>
-    <Card className="text-sm space-y-1"><p>Health: database {d.health.database}; ledger balanced: <b>{String(d.health.ledger_balanced)}</b>; audit chain intact: <b>{String(d.health.audit_chain_intact)}</b>; rules month {d.month}; users {d.users}; fees collected Rs {m.fees}.</p></Card></>);
+  const rs = (v: number) => 'Rs ' + (v ?? 0).toLocaleString('en-IN');
+  const Box = ({ l, v, sub }: { l: string; v: string | number; sub?: string }) => <Card><p className="text-xs text-slate-500">{l}</p><p className="text-2xl font-bold">{v}</p>{sub && <p className="text-[11px] text-slate-400">{sub}</p>}</Card>;
+  return (<><h1 className="text-xl font-bold">Overview</h1>
+    <Card className="space-y-1"><p className="text-xs text-slate-500">Money in the system</p>
+      <p className="text-3xl font-bold">{rs(m.issued)}</p>
+      <p className="text-xs text-slate-500">{d.users} {d.users === 1 ? 'person' : 'people'} signed up, each given {rs(d.users ? Math.round(m.issued / d.users) : 0)} to start. Nothing is ever created after that; money only moves between the boxes below.</p>
+      <p className="text-sm pt-1 font-mono">{rs(m.main)} accounts + {rs(m.send_bucket)} send + {rs(m.receive_bucket)} receive + {rs(m.bank_kept)} kept + {rs(m.fees)} fees = <b>{rs(m.main + m.send_bucket + m.receive_bucket + m.bank_kept + m.fees)}</b> {d.health.ledger_balanced ? '✓' : '✗ MISMATCH'}</p></Card>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <Box l="Bank accounts" v={rs(m.main)} sub="everyone's main accounts" />
+      <Box l="Send slots" v={rs(m.send_bucket)} sub="points on phones, not yet spent" />
+      <Box l="Receive slots" v={rs(m.receive_bucket)} sub="received, not yet moved to bank" />
+      <Box l="Fees collected" v={rs(m.fees)} sub="top-up fees" />
+      <Box l="Payments today" v={d.payments_today} />
+      <Box l="Waiting to sync" v={d.pending_sync} sub="payments not yet at the bank" />
+      <Box l="Held claims" v={d.held_claims} sub="need a person to review" />
+      <Box l="Alerts (24h)" v={d.active_alerts} />
+    </div>
+    <Card className="text-sm"><p>Health: database {d.health.database}; ledger balanced <b>{d.health.ledger_balanced ? 'yes' : 'NO'}</b>; audit chain intact <b>{d.health.audit_chain_intact ? 'yes' : 'NO'}</b>; rules month {d.month}; kept by bank (lost phones) {rs(m.bank_kept)}.</p></Card></>);
 }
 
 function Live({ a }: P) {

@@ -565,7 +565,7 @@ def create_app(settings: Settings | None = None, portal: str = "all") -> FastAPI
         t = svc.ledger_totals(db)
         today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         c = lambda q: db.scalar(q)
-        return {"money_in_slots": {"main": t["main"], "send_bucket": t["send"], "receive_bucket": t["recv"], "bank_kept": t["pool"], "fees": t["fees"]},
+        return {"money_in_slots": {"main": t["main"], "send_bucket": t["send"], "receive_bucket": t["recv"], "bank_kept": t["pool"], "fees": t["fees"], "issued": -t["mint"]},
                 "payments_today": c(select(func.count()).select_from(Transfer).where(Transfer.created_at >= today)),
                 "pending_sync": c(select(func.count()).select_from(Transfer).where(Transfer.status == "pending")),
                 "held_claims": c(select(func.count()).select_from(Transfer).where(Transfer.status == "held")),
